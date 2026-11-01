@@ -487,4 +487,164 @@ jobs:
           "users" -> {
           connected = true
           val a = m.getJSONArray("users")
-          
+                    all = List(a.length()) { a.getString(it) }
+          refreshList()
+          if (state != 0 && peer !in all) setIdle("$peer left") else render()
+          }
+          "call" -> {
+          if (state != 0) sendJ("busy", from)
+          else { peer = from; state = 2; note = null; ring(); collapse(false); render(); ui.postDelayed(timeout, 30000) }
+          }
+          "accept" -> if (state == 1 && from == peer) { ui.removeCallbacks(timeout); state = 3; startAudio(); render() }
+          "reject" -> if (state == 1 && from == peer) setIdle("$peer ne reject kiya")
+          "busy" -> if (state == 1 && from == peer) setIdle("$peer busy hai")
+          "end" -> if (state != 0 && from == peer) setIdle("Call ended")
+          }
+          }
+          private fun callUser(n: String) {
+          peer = n; state = 1; note = null
+          sendJ("call", n)
+          render()
+          ui.postDelayed(timeout, 30000)
+          }
+          private fun onB1() {
+          if (state == 2) {
+          ui.removeCallbacks(timeout)
+          stopRing()
+          state = 3
+          sendJ("accept", peer)
+          startAudio()
+          render()
+          } else if (state == 3) { muted = !muted; render() }
+          }
+          private fun onB2() {
+          if (state == 0) return
+          sendJ(if (state == 2) "reject" else "end", peer)
+          setIdle(null)
+          }
+          private fun setIdle(msg: String?) {
+          ui.removeCallbacks(timeout)
+          stopRing()
+          stopAudio()
+          state = 0; peer = ""; muted = false; note = msg
+          render()
+          }
+          private fun ring() {
+          stopRing()
+          val alarm = getSharedPreferences("p", 0).getBoolean("alarm", true)
+          try {
+          val uri = RingtoneManager.getDefaultUri(if (alarm) RingtoneManager.TYPE_ALARM else RingtoneManager.TYPE_RINGTONE)
+          ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+          val mp = MediaPlayer()
+          mp.setAudioAttributes(AudioAttributes.Builder()
+          .setUsage(if (alarm) AudioAttributes.USAGE_ALARM else AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+          .setContentType(AudioAttributes.CONTENT_TYPE_SONIC).build())
+          mp.setDataSource(this, uri)
+          mp.isLooping = true
+          mp.prepare()
+          mp.start()
+          player = mp
+          } catch (e: Exception) {}
+          try {
+          val v = getSystemService(VIBRATOR_SERVICE) as Vibrator
+          v.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 700, 500), 0))
+          vib = v
+          } catch (e: Exception) {}
+          }
+          private fun stopRing() {
+          try { player?.stop() } catch (e: Exception) {}
+          try { player?.release() } catch (e: Exception) {}
+          player = null
+          try { vib?.cancel() } catch (e: Exception) {}
+          vib = null
+          }
+          private fun audioIn(d: ByteArray) {
+          if (state != 3 || !talking || d.size < 2) return
+          val l = d[0].toInt() and 0xFF
+          if (d.size <= 1 + l) return
+          if (String(d, 1, l) != peer) return
+          while (q.size > 12) q.poll()
+          q.offer(d.copyOfRange(1 + l, d.size))
+          }
+          private fun startAudio() {
+          stopAudio()
+          try {
+          val rb = maxOf(AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), 3200)
+          val r = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, rb)
+          val tb = maxOf(AudioTrack.getMinBufferSize(SR, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT), 6400)
+          val t = AudioTrack(
+          AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build(),
+          AudioFormat.Builder().setSampleRate(SR).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build(),
+          tb, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE
+          )
+          rec = r
+          trk = t
+          q.clear()
+          talking = true
+          r.startRecording()
+          t.play()
+          val p = peer.toByteArray()
+          Thread {
+          try {
+          val buf = ShortArray(320)
+          val hdr = ByteArray(1 + p.size)
+          hdr[0] = p.size.toByte()
+          System.arraycopy(p, 0, hdr, 1, p.size)
+          while (talking) {
+          val n = r.read(buf, 0, 320)
+          if (n < 0) break
+          if (n == 0 || muted) continue
+          if ((ws?.queueSize() ?: 0L) > 20000L) continue
+          val out = ByteArray(hdr.size + n)
+          System.arraycopy(hdr, 0, out, 0, hdr.size)
+          for (i in 0 until n) out[hdr.size + i] = enc(buf[i].toInt())
+          ws?.send(out.toByteString())
+          }
+          } catch (e: Exception) {}
+          }.start()
+          Thread {
+          try {
+          while (talking) {
+          val f = q.poll(200, TimeUnit.MILLISECONDS) ?: continue
+          val sh = ShortArray(f.size)
+          for (i in f.indices) sh[i] = dec(f[i])
+          t.write(sh, 0, sh.size)
+          }
+          } catch (e: Exception) {}
+          }.start()
+          } catch (e: Exception) {
+          stopAudio()
+          note = "Mic start nahi hua"
+          }
+          }
+          private fun stopAudio() {
+          talking = false
+          try { rec?.stop() } catch (e: Exception) {}
+          try { rec?.release() } catch (e: Exception) {}
+          try { trk?.stop() } catch (e: Exception) {}
+          try { trk?.release() } catch (e: Exception) {}
+          rec = null
+          trk = null
+          q.clear()
+          }
+          override fun onDestroy() {
+          alive = false
+          gen++
+          ui.removeCallbacksAndMessages(null)
+          stopRing()
+          stopAudio()
+          ws?.close(1000, null)
+          try { wm.removeView(root) } catch (e: Exception) {}
+          super.onDestroy()
+          }
+          }
+          EOF
+      - name: Build
+        run: gradle assembleDebug --no-daemon
+      - name: Publish APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: QuickTalk v${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
+         
