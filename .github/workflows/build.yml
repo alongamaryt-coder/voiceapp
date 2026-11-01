@@ -132,4 +132,110 @@ jobs:
           l.addView(t2)
           return l
           }
+                    private fun login(): View {
+          val l = LinearLayout(this)
+          l.orientation = LinearLayout.VERTICAL
+          l.gravity = Gravity.CENTER
+          l.setBackgroundColor(Color.BLACK)
+          l.setPadding(48, 48, 48, 48)
+          val t = TextView(this)
+          t.text = "QuickTalk"
+          t.setTextColor(Color.WHITE)
+          t.textSize = 28f
+          t.gravity = Gravity.CENTER
+          t.setPadding(0, 0, 0, 32)
+          nameBox = EditText(this)
+          nameBox.hint = "Username"
+          nameBox.setTextColor(Color.WHITE)
+          nameBox.setHintTextColor(Color.GRAY)
+          nameBox.setSingleLine(true)
+          nameBox.setText(prefs().getString("name", ""))
+          val sw = Switch(this)
+          sw.text = "अलार्म की तरह रिंग करो"
+          sw.setTextColor(Color.WHITE)
+          sw.isChecked = prefs().getBoolean("alarm", true)
+          sw.setOnCheckedChangeListener { _, c -> prefs().edit().putBoolean("alarm", c).apply() }
+          sw.setPadding(0, 32, 0, 32)
+          val bt = Button(this)
+          bt.text = "Join"
+          bt.setOnClickListener { go() }
+          l.addView(t)
+          l.addView(nameBox)
+          l.addView(sw)
+          l.addView(bt)
+          return l
+          }
+          private fun go() {
+          val n = nameBox.text.toString().trim()
+          if (n.isEmpty()) { Toast.makeText(this, "Username likho", Toast.LENGTH_SHORT).show(); return }
+          prefs().edit().putString("name", n).apply()
+          if (!Settings.canDrawOverlays(this)) {
+          Toast.makeText(this, "Allow 'Display over other apps', phir Join dobara dabao", Toast.LENGTH_LONG).show()
+          startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+          return
+          }
+          val need = ArrayList<String>()
+          if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO)
+          if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.POST_NOTIFICATIONS)
+          if (need.isNotEmpty()) { requestPermissions(need.toTypedArray(), 1); return }
+          val pm = getSystemService(PowerManager::class.java)
+          if (!pm.isIgnoringBatteryOptimizations(packageName) && !prefs().getBoolean("bat", false)) {
+          prefs().edit().putBoolean("bat", true).apply()
+          Toast.makeText(this, "Battery: Allow/Unrestricted karo, phir Join dobara dabao", Toast.LENGTH_LONG).show()
+          startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+          return
+          }
+          startForegroundService(Intent(this, VoiceService::class.java).putExtra("name", n))
+          Toast.makeText(this, "Overlay chalu ho gaya", Toast.LENGTH_SHORT).show()
+          finish()
+          }
+          override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+          if (r.isNotEmpty() && r.all { it == PackageManager.PERMISSION_GRANTED }) go()
+          else Toast.makeText(this, "Mic permission zaroori hai", Toast.LENGTH_LONG).show()
+          }
+          }
+          EOF
+          mkdir -p $(dirname app/src/main/java/com/md/quicktalk/VoiceService.kt)
+          cat > app/src/main/java/com/md/quicktalk/VoiceService.kt << 'EOF'
+          package com.md.quicktalk
+          import android.app.*
+          import android.content.*
+          import android.content.pm.ServiceInfo
+          import android.graphics.Color
+          import android.graphics.PixelFormat
+          import android.graphics.drawable.GradientDrawable
+          import android.media.*
+          import android.os.*
+          import android.provider.Settings
+          import android.text.Editable
+          import android.text.TextWatcher
+          import android.view.*
+          import android.view.inputmethod.EditorInfo
+          import android.view.inputmethod.InputMethodManager
+          import android.widget.*
+          import okhttp3.*
+          import okio.ByteString
+          import okio.ByteString.Companion.toByteString
+          import org.json.JSONObject
+          import java.util.concurrent.LinkedBlockingQueue
+          import java.util.concurrent.TimeUnit
+          private fun enc(s: Int): Byte {
+          var x = s
+          var sign = 0
+          if (x < 0) { x = -x; sign = 0x80 }
+          if (x > 32635) x = 32635
+          x += 132
+          var e = 7
+          var mask = 0x4000
+          while (e > 0 && (x and mask) == 0) { e--; mask = mask shr 1 }
+          val man = (x shr (e + 3)) and 0x0F
+          return (sign or (e shl 4) or man).inv().toByte()
+          }
+          private fun dec(b: Byte): Short {
+          val u = b.toInt().inv() and 0xFF
+          val e = (u shr 4) and 7
+          val man = u and 15
+          val s = (((man shl 3) + 132) shl e) - 132
+          return (if ((u and 0x80) != 0) -s else s).toShort()
+          }
           
