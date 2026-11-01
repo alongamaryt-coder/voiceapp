@@ -8,8 +8,17 @@ function list(){const n=[...users.keys()];for(const s of users.values())send(s,{
 wss.on('connection',ws=>{
   ws.alive=true;
   ws.on('pong',()=>{ws.alive=true});
-  ws.on('message',d=>{
-    let m;try{m=JSON.parse(d)}catch{return}
+  ws.on('message',(d,isBin)=>{
+    if(isBin){
+      if(!ws.name||d.length<2)return;
+      const l=d[0];
+      const to=users.get(d.subarray(1,1+l).toString());
+      if(!to||to.readyState!==1)return;
+      const me=Buffer.from(ws.name);
+      to.send(Buffer.concat([Buffer.from([me.length]),me,d.subarray(1+l)]),{binary:true});
+      return;
+    }
+    let m;try{m=JSON.parse(d.toString())}catch{return}
     if(m.t==='login'){
       const n=String(m.name||'').trim().slice(0,20);
       if(!n)return;
