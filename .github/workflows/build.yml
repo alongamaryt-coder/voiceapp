@@ -324,4 +324,167 @@ jobs:
           val top = LinearLayout(this)
           top.orientation = LinearLayout.HORIZONTAL
           top.gravity = Gravity.CENTER_VERTICAL
+                    status = TextView(this)
+          status.setTextColor(Color.WHITE)
+          status.textSize = 12f
+          top.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+          val hide = TextView(this)
+          hide.text = "—"
+          hide.setTextColor(Color.WHITE)
+          hide.textSize = 20f
+          hide.setPadding(dp(12), 0, dp(4), 0)
+          hide.setOnClickListener { collapse(true) }
+          top.addView(hide)
+          panel.addView(top)
+          search = EditText(this)
+          search.hint = "Search"
+          search.setHintTextColor(Color.GRAY)
+          search.setTextColor(Color.WHITE)
+          search.textSize = 13f
+          search.setSingleLine(true)
+          search.imeOptions = EditorInfo.IME_ACTION_DONE
+          search.addTextChangedListener(object : TextWatcher {
+          override fun afterTextChanged(s: Editable?) { filter = s.toString(); refreshList() }
+          override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+          override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+          })
+          search.setOnTouchListener { _, e ->
+          if (e.action == MotionEvent.ACTION_DOWN && (lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0) {
+          setFocusable(true)
+          ui.postDelayed({
+          search.requestFocus()
+          (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(search, 0)
+          }, 150)
+          }
+          false
+          }
+          search.setOnEditorActionListener { _, _, _ -> setFocusable(false); true }
+          panel.addView(search)
+          adapter = object : ArrayAdapter<String>(this@VoiceService, android.R.layout.simple_list_item_1, shown) {
+          override fun getView(p: Int, v: View?, g: ViewGroup): View {
+          val t = super.getView(p, v, g) as TextView
+          t.setTextColor(Color.WHITE)
+          t.textSize = 14f
+          return t
+          }
+          }
+          val list = ListView(this)
+          list.adapter = adapter
+          list.setOnItemClickListener { _, _, p, _ -> if (state == 0 && p < shown.size) callUser(shown[p]) }
+          panel.addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(200)))
+          val row = LinearLayout(this)
+          row.orientation = LinearLayout.HORIZONTAL
+          b1 = Button(this)
+          b1.textSize = 12f
+          b1.isAllCaps = false
+          b1.setOnClickListener { onB1() }
+          b2 = Button(this)
+          b2.textSize = 12f
+          b2.isAllCaps = false
+          b2.setOnClickListener { onB2() }
+          row.addView(b1, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+          row.addView(b2, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+          panel.addView(row)
+          dot = TextView(this)
+          dot.text = "●"
+          dot.gravity = Gravity.CENTER
+          dot.setTextColor(Color.WHITE)
+          dot.textSize = 18f
+          val dbg = GradientDrawable()
+          dbg.shape = GradientDrawable.OVAL
+          dbg.setColor(Color.parseColor("#2E7D32"))
+          dot.background = dbg
+          dot.visibility = View.GONE
+          dot.setOnClickListener { collapse(false) }
+          root.addView(panel, FrameLayout.LayoutParams(dp(190), FrameLayout.LayoutParams.WRAP_CONTENT))
+          root.addView(dot, FrameLayout.LayoutParams(dp(36), dp(36)))
+          root.alpha = 0.55f
+          root.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_OUTSIDE) setFocusable(false); false }
+          lp = WindowManager.LayoutParams(
+          WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+          PixelFormat.TRANSLUCENT
+          )
+          lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+          wm.addView(root, lp)
+          overlayOn = true
+          }
+          private fun setFocusable(f: Boolean) {
+          if (!overlayOn) return
+          val nf = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+          (if (f) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+          if (lp.flags == nf) return
+          lp.flags = nf
+          wm.updateViewLayout(root, lp)
+          if (!f) {
+          (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0)
+          search.clearFocus()
+          }
+          }
+          private fun collapse(on: Boolean) {
+          setFocusable(false)
+          panel.visibility = if (on) View.GONE else View.VISIBLE
+          dot.visibility = if (on) View.VISIBLE else View.GONE
+          root.alpha = if (on) 0.25f else 0.55f
+          }
+          private fun refreshList() {
+          shown.clear()
+          shown.addAll(all.filter { it != me && it.contains(filter, true) })
+          adapter.notifyDataSetChanged()
+          }
+          private fun render() {
+          status.text = when {
+          !connected -> "Connecting... (pehli baar 1 min lag sakta hai)"
+          state == 1 -> "Calling $peer..."
+          state == 2 -> "$peer is calling"
+          state == 3 -> "In call: $peer"
+          else -> note ?: "Online: $me"
+          }
+          b1.visibility = if (state == 2 || state == 3) View.VISIBLE else View.GONE
+          b1.text = if (state == 2) "Accept" else if (muted) "Unmute" else "Mute"
+          b2.visibility = if (state == 0) View.GONE else View.VISIBLE
+          b2.text = when (state) { 1 -> "Cancel"; 2 -> "Reject"; else -> "End" }
+          }
+          private fun sendJ(t: String, to: String) {
+          ws?.send(JSONObject().put("t", t).put("to", to).toString())
+          }
+          private fun connect() {
+          if (!alive) return
+          val g = ++gen
+          ws = http.newWebSocket(Request.Builder().url(SERVER).build(), object : WebSocketListener() {
+          override fun onOpen(w: WebSocket, r: Response) {
+          w.send(JSONObject().put("t", "login").put("name", me).toString())
+          }
+          override fun onMessage(w: WebSocket, text: String) {
+          try {
+          val m = JSONObject(text)
+          ui.post { if (g == gen) onMsg(m) }
+          } catch (e: Exception) {}
+          }
+          override fun onMessage(w: WebSocket, bytes: ByteString) {
+          if (g == gen) audioIn(bytes.toByteArray())
+          }
+          override fun onClosed(w: WebSocket, code: Int, reason: String) { lost(g) }
+          override fun onFailure(w: WebSocket, t: Throwable, r: Response?) { lost(g) }
+          })
+          }
+          private fun lost(g: Int) {
+          ui.post {
+          if (g != gen || !alive) return@post
+          connected = false
+          all = emptyList()
+          refreshList()
+          if (state != 0) setIdle("Disconnected") else render()
+          ui.removeCallbacks(reconn)
+          ui.postDelayed(reconn, 3000)
+          }
+          }
+          private fun onMsg(m: JSONObject) {
+          val from = m.optString("from")
+          when (m.optString("t")) {
+          "ok" -> { connected = true; render() }
+          "users" -> {
+          connected = true
+          val a = m.getJSONArray("users")
           
