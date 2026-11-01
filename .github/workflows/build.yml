@@ -87,7 +87,7 @@ jobs:
           </application>
           </manifest>
           EOF
-          mkdir -p $(dirname app/src/main/java/com/md/quicktalk/MainActivity.kt)
+                    mkdir -p $(dirname app/src/main/java/com/md/quicktalk/MainActivity.kt)
           cat > app/src/main/java/com/md/quicktalk/MainActivity.kt << 'EOF'
           package com.md.quicktalk
           import android.Manifest
@@ -306,7 +306,7 @@ jobs:
           val n = Notification.Builder(this, "q")
           .setSmallIcon(android.R.drawable.ic_btn_speak_now)
           .setContentTitle("QuickTalk chalu hai")
-          .setContentText("Band karne ke liye Stop dabao")
+          .setContentText("Band karne के liye Stop dabao")
           .addAction(0, "Stop", stop)
           .build()
           if (Build.VERSION.SDK_INT >= 29) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -443,4 +443,98 @@ jobs:
           }
           b1.visibility = if (state == 2 || state == 3) View.VISIBLE else View.GONE
           b1.text = if (state == 2) "Accept" else if (muted) "Unmute" else "Mute"
-          b2.visibility = if (state == 0) View.GONE 
+          b2.visibility = if (state == 0) View.GONE else View.VISIBLE
+          b2.text = if (state == 1 || state == 2) "Reject" else "End"
+          }
+          private fun connect() {
+          val req = Request.Builder().url(SERVER).build()
+          ws = http.newWebSocket(req, object : WebSocketListener() {
+          override fun onOpen(webSocket: WebSocket, response: Response) {
+          connected = true
+          ui.post { render(); sendJ("login", name = me) }
+          }
+          override fun onMessage(webSocket: WebSocket, text: String) {
+          try {
+          val o = JSONObject(text)
+          when (o.optString("t")) {
+          "ok" -> { ui.post { note = null; render() } }
+          "users" -> {
+          val arr = o.getJSONArray("users")
+          val list = ArrayList<String>()
+          for (i in 0 until arr.length()) list.add(arr.getString(i))
+          all = list
+          ui.post { refreshList() }
+          }
+          "call" -> {
+          if (state == 0) {
+          peer = o.getString("from")
+          state = 2
+          ui.post {
+          render()
+          val a = getSystemService(AUDIO_SERVICE) as AudioManager
+          a.mode = AudioManager.MODE_IN_COMMUNICATION
+          a.isSpeakerphoneOn = true
+          if (prefs().getBoolean("alarm", true)) {
+          try {
+          player = MediaPlayer.create(applicationContext, Settings.System.DEFAULT_ALARM_ALERT_URI).apply {
+          isLooping = true
+          start()
+          }
+          } catch (e: Exception) {}
+          }
+          vib = getSystemService(VIBRATOR_SERVICE) as Vibrator
+          if (Build.VERSION.SDK_INT >= 24) vib?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 500), 0))
+          else vib?.vibrate(longArrayOf(0, 500, 500), 0)
+          ui.postDelayed(timeout, 30000)
+          }
+          } else {
+          sendJ("reject", o.getString("from"))
+          }
+          }
+          "accept" -> {
+          if (state == 1 && o.getString("from") == peer) {
+          ui.removeCallbacks(timeout)
+          state = 3
+          ui.post { render(); startAudio() }
+          }
+          }
+          "reject" -> {
+          if (o.getString("from") == peer) {
+          ui.removeCallbacks(timeout)
+          setIdle("Call rejected")
+          }
+          }
+          "end" -> {
+          if (o.getString("from") == peer) {
+          setIdle("Call ended")
+          }
+          }
+          }
+          } catch (e: Exception) {}
+          }
+          override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+          if (state != 3) return
+          val data = bytes.toByteArray()
+          if (data.size < 2) return
+          val len = data[0].toInt() and 0xFF
+          if (data.size < 1 + len) return
+          val from = String(data, 1, len)
+          if (from != peer) return
+          val pcm = ByteArray((data.size - 1 - len) * 2)
+          for (i in 0 until (data.size - 1 - len)) {
+          val s = dec(data[1 + len + i])
+          pcm[i * 2] = (s.toInt() and 0xFF).toByte()
+          pcm[i * 2 + 1] = ((s.toInt() ushr 8) and 0xFF).toByte()
+          }
+          q.offer(pcm)
+          }
+          override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+          disconnectCleanup()
+          }
+          override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+          disconnectCleanup()
+          }
+          })
+          }
+          private fun disconnectCleanup() {
+     
