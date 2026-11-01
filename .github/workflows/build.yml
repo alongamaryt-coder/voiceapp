@@ -132,7 +132,7 @@ jobs:
           l.addView(t2)
           return l
           }
-          private fun login(): View {
+                    private fun login(): View {
           val l = LinearLayout(this)
           l.orientation = LinearLayout.VERTICAL
           l.gravity = Gravity.CENTER
@@ -195,7 +195,7 @@ jobs:
           }
           }
           EOF
-                    mkdir -p $(dirname app/src/main/java/com/md/quicktalk/VoiceService.kt)
+          mkdir -p $(dirname app/src/main/java/com/md/quicktalk/VoiceService.kt)
           cat > app/src/main/java/com/md/quicktalk/VoiceService.kt << 'EOF'
           package com.md.quicktalk
           import android.app.*
@@ -238,7 +238,7 @@ jobs:
           val s = (((man shl 3) + 132) shl e) - 132
           return (if ((u and 0x80) != 0) -s else s).toShort()
           }
-          class VoiceService : Service() {
+                    class VoiceService : Service() {
           private val SERVER = "wss://voiceapp-rhcc.onrender.com"
           private val SR = 16000
           private val ui = Handler(Looper.getMainLooper())
@@ -272,6 +272,7 @@ jobs:
           private val q = LinkedBlockingQueue<ByteArray>()
           private var player: MediaPlayer? = null
           private var vib: Vibrator? = null
+          private fun prefs() = getSharedPreferences("p", 0)
           private val timeout = Runnable {
           if (state == 1) { sendJ("end", peer); setIdle("No answer") }
           else if (state == 2) { sendJ("reject", peer); setIdle("Missed call") }
