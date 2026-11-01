@@ -161,4 +161,167 @@ jobs:
           bt.setOnClickListener { go() }
           l.addView(t)
           l.addView(nameBox)
+                    l.addView(sw)
+          l.addView(bt)
+          return l
+          }
+          private fun go() {
+          val n = nameBox.text.toString().trim()
+          if (n.isEmpty()) { Toast.makeText(this, "Username likho", Toast.LENGTH_SHORT).show(); return }
+          prefs().edit().putString("name", n).apply()
+          if (!Settings.canDrawOverlays(this)) {
+          Toast.makeText(this, "Allow 'Display over other apps', phir Join dobara dabao", Toast.LENGTH_LONG).show()
+          startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+          return
+          }
+          val need = ArrayList<String>()
+          if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO)
+          if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.POST_NOTIFICATIONS)
+          if (need.isNotEmpty()) { requestPermissions(need.toTypedArray(), 1); return }
+          val pm = getSystemService(PowerManager::class.java)
+          if (!pm.isIgnoringBatteryOptimizations(packageName) && !prefs().getBoolean("bat", false)) {
+          prefs().edit().putBoolean("bat", true).apply()
+          Toast.makeText(this, "Battery: Allow/Unrestricted karo, phir Join dobara dabao", Toast.LENGTH_LONG).show()
+          startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+          return
+          }
+          startForegroundService(Intent(this, VoiceService::class.java).putExtra("name", n))
+          Toast.makeText(this, "Overlay chalu ho gaya", Toast.LENGTH_SHORT).show()
+          finish()
+          }
+          override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+          if (r.isNotEmpty() && r.all { it == PackageManager.PERMISSION_GRANTED }) go()
+          else Toast.makeText(this, "Mic permission zaroori hai", Toast.LENGTH_LONG).show()
+          }
+          }
+          EOF
+          mkdir -p $(dirname app/src/main/java/com/md/quicktalk/VoiceService.kt)
+          cat > app/src/main/java/com/md/quicktalk/VoiceService.kt << 'EOF'
+          package com.md.quicktalk
+          import android.app.*
+          import android.content.*
+          import android.content.pm.ServiceInfo
+          import android.graphics.Color
+          import android.graphics.PixelFormat
+          import android.graphics.drawable.GradientDrawable
+          import android.media.*
+          import android.os.*
+          import android.text.Editable
+          import android.text.TextWatcher
+          import android.view.*
+          import android.view.inputmethod.EditorInfo
+          import android.view.inputmethod.InputMethodManager
+          import android.widget.*
+          import okhttp3.*
+          import okio.ByteString
+          import okio.ByteString.Companion.toByteString
+          import org.json.JSONObject
+          import java.util.concurrent.LinkedBlockingQueue
+          import java.util.concurrent.TimeUnit
+          private fun enc(s: Int): Byte {
+          var x = s
+          var sign = 0
+          if (x < 0) { x = -x; sign = 0x80 }
+          if (x > 32635) x = 32635
+          x += 132
+          var e = 7
+          var mask = 0x4000
+          while (e > 0 && (x and mask) == 0) { e--; mask = mask shr 1 }
+          val man = (x shr (e + 3)) and 0x0F
+          return (sign or (e shl 4) or man).inv().toByte()
+          }
+          private fun dec(b: Byte): Short {
+          val u = b.toInt().inv() and 0xFF
+          val e = (u shr 4) and 7
+          val man = u and 15
+          val s = (((man shl 3) + 132) shl e) - 132
+          return (if ((u and 0x80) != 0) -s else s).toShort()
+          }
+          class VoiceService : Service() {
+          private val SERVER = "wss://voiceapp-rhcc.onrender.com"
+          private val SR = 16000
+          private val ui = Handler(Looper.getMainLooper())
+          private val http = OkHttpClient.Builder().connectTimeout(70, TimeUnit.SECONDS).pingInterval(25, TimeUnit.SECONDS).build()
+          private lateinit var wm: WindowManager
+          private lateinit var root: FrameLayout
+          private lateinit var panel: LinearLayout
+          private lateinit var dot: TextView
+          private lateinit var status: TextView
+          private lateinit var search: EditText
+          private lateinit var b1: Button
+          private lateinit var b2: Button
+          private lateinit var adapter: ArrayAdapter<String>
+          private lateinit var lp: WindowManager.LayoutParams
+          private val shown = ArrayList<String>()
+          private var all: List<String> = emptyList()
+          private var filter = ""
+          private var me = ""
+          private var alive = false
+          private var connected = false
+          private var overlayOn = false
+          private var note: String? = null
+          private var gen = 0
+          @Volatile private var ws: WebSocket? = null
+          @Volatile private var state = 0
+          @Volatile private var peer = ""
+          @Volatile private var talking = false
+          @Volatile private var muted = false
+          private var rec: AudioRecord? = null
+          private var trk: AudioTrack? = null
+          private val q = LinkedBlockingQueue<ByteArray>()
+          private var player: MediaPlayer? = null
+          private var vib: Vibrator? = null
+          private val timeout = Runnable {
+          if (state == 1) { sendJ("end", peer); setIdle("No answer") }
+          else if (state == 2) { sendJ("reject", peer); setIdle("Missed call") }
+          }
+          private val reconn = Runnable { connect() }
+          override fun onBind(i: Intent?): IBinder? = null
+          private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+          override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
+          if (i == null || i.action == "STOP") { stopSelf(); return START_NOT_STICKY }
+          val n = i.getStringExtra("name") ?: ""
+          if (n.isEmpty()) { stopSelf(); return START_NOT_STICKY }
+          startFg()
+          me = n
+          if (alive) {
+          ws?.cancel()
+          ui.removeCallbacks(reconn)
+          connected = false
+          render()
+          connect()
+          return START_NOT_STICKY
+          }
+          alive = true
+          wm = getSystemService(WINDOW_SERVICE) as WindowManager
+          buildOverlay()
+          render()
+          connect()
+          return START_NOT_STICKY
+          }
+          private fun startFg() {
+          val nm = getSystemService(NotificationManager::class.java)
+          nm.createNotificationChannel(NotificationChannel("q", "QuickTalk", NotificationManager.IMPORTANCE_LOW))
+          val stop = PendingIntent.getService(this, 0, Intent(this, VoiceService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
+          val n = Notification.Builder(this, "q")
+          .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+          .setContentTitle("QuickTalk chalu hai")
+          .setContentText("Band karne ke liye Stop dabao")
+          .addAction(0, "Stop", stop)
+          .build()
+          if (Build.VERSION.SDK_INT >= 29) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+          else startForeground(1, n)
+          }
+          private fun buildOverlay() {
+          root = FrameLayout(this)
+          panel = LinearLayout(this)
+          panel.orientation = LinearLayout.VERTICAL
+          panel.setPadding(dp(8), dp(8), dp(8), dp(8))
+          val bg = GradientDrawable()
+          bg.setColor(Color.parseColor("#111111"))
+          bg.cornerRadius = dp(12).toFloat()
+          panel.background = bg
+          val top = LinearLayout(this)
+          top.orientation = LinearLayout.HORIZONTAL
+          top.gravity = Gravity.CENTER_VERTICAL
           
