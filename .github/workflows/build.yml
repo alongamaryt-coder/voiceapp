@@ -640,7 +640,7 @@ jobs:
           }
           EOF
       - name: Build
-        run: gradle assembleDebug --no-daemon
+        run: mkdir -p app/src/main/res/mipmap-xxxhdpi && cp logo.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png && sed -i 's|android:label="QuickTalk"|android:label="QuickTalk" android:icon="@mipmap/ic_launcher"|' app/src/main/AndroidManifest.xml &&gradle assembleDebug --no-daemon
       - name: Publish APK
         uses: softprops/action-gh-release@v2
         with:
