@@ -87,7 +87,7 @@ jobs:
           </application>
           </manifest>
           EOF
-                    mkdir -p $(dirname app/src/main/java/com/md/quicktalk/MainActivity.kt)
+          mkdir -p $(dirname app/src/main/java/com/md/quicktalk/MainActivity.kt)
           cat > app/src/main/java/com/md/quicktalk/MainActivity.kt << 'EOF'
           package com.md.quicktalk
           import android.Manifest
@@ -195,7 +195,7 @@ jobs:
           }
           }
           EOF
-          mkdir -p $(dirname app/src/main/java/com/md/quicktalk/VoiceService.kt)
+                    mkdir -p $(dirname app/src/main/java/com/md/quicktalk/VoiceService.kt)
           cat > app/src/main/java/com/md/quicktalk/VoiceService.kt << 'EOF'
           package com.md.quicktalk
           import android.app.*
@@ -306,7 +306,7 @@ jobs:
           val n = Notification.Builder(this, "q")
           .setSmallIcon(android.R.drawable.ic_btn_speak_now)
           .setContentTitle("QuickTalk chalu hai")
-          .setContentText("Band karne के liye Stop dabao")
+          .setContentText("Band karne ke liye Stop dabao")
           .addAction(0, "Stop", stop)
           .build()
           if (Build.VERSION.SDK_INT >= 29) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -537,4 +537,128 @@ jobs:
           })
           }
           private fun disconnectCleanup() {
-     
+          connected = false
+          setIdle(null)
+          ui.post { render() }
+          ui.postDelayed(reconn, 5000)
+          }
+          private fun setIdle(msg: String?) {
+          ui.removeCallbacks(timeout)
+          stopAudio()
+          state = 0
+          peer = ""
+          note = msg
+          val a = getSystemService(AUDIO_SERVICE) as AudioManager
+          a.mode = AudioManager.MODE_NORMAL
+          ui.post { render() }
+          }
+          private fun sendJ(type: String, to: String = "", name: String = "") {
+          val o = JSONObject().put("t", type)
+          if (to.isNotEmpty()) o.put("to", to)
+          if (name.isNotEmpty()) o.put("name", name)
+          ws?.send(o.toString())
+          }
+          private fun callUser(to: String) {
+          peer = to
+          state = 1
+          render()
+          sendJ("call", to)
+          ui.postDelayed(timeout, 30000)
+          }
+          private fun onB1() {
+          if (state == 2) {
+          ui.removeCallbacks(timeout)
+          stopAlert()
+          state = 3
+          render()
+          sendJ("accept", peer)
+          startAudio()
+          } else if (state == 3) {
+          muted = !muted
+          render()
+          }
+          }
+          private fun onB2() {
+          stopAlert()
+          if (state == 1) { sendJ("end", peer); setIdle("Cancelled") }
+          else if (state == 2) { sendJ("reject", peer); setIdle("Declined") }
+          else if (state == 3) { sendJ("end", peer); setIdle("Ended") }
+          }
+          private fun stopAlert() {
+          try { player?.stop(); player?.release() } catch (e: Exception) {}
+          player = null
+          try { vib?.cancel() } catch (e: Exception) {}
+          vib = null
+          val a = getSystemService(AUDIO_MANAGER_SERVICE) as AudioManager
+          a.mode = AudioManager.MODE_IN_COMMUNICATION
+          a.isSpeakerphoneOn = true
+          }
+          private fun startAudio() {
+          stopAlert()
+          talking = true
+          val minB = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+          try {
+          rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minB, 4096))
+          rec?.startRecording()
+          } catch (e: Exception) { setIdle("Mic error"); return }
+          val minP = AudioTrack.getMinBufferSize(SR, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+          trk = AudioTrack.Builder()
+          .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNication).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+          .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(SR).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+          .setBufferSizeInBytes(maxOf(minP, 4096))
+          .setTransferMode(AudioTrack.MODE_STREAM)
+          .build()
+          trk?.play()
+          Thread {
+          val buf = ByteArray(640)
+          while (talking) {
+          try {
+          val read = rec?.read(buf, 0, buf.size) ?: 0
+          if (read > 0 && !muted) {
+          val encoded = ByteArray(read / 2)
+          for (i in 0 until (read / 2)) {
+          val s = ((buf[i * 2].toInt() and 0xFF) or ((buf[i * 2 + 1].toInt() and 0xFF) shl 8)).toShort()
+          encoded[i] = enc(s.toInt())
+          }
+          val meBytes = me.toByteArray(Charsets.UTF_8)
+          val packet = ByteArray(1 + meBytes.size + encoded.size)
+          packet[0] = meBytes.size.toByte()
+          System.arraycopy(meBytes, 0, packet, 1, meBytes.size)
+          System.arraycopy(encoded, 0, packet, 1 + meBytes.size, encoded.size)
+          ws?.send(packet.toByteString())
+          }
+          } catch (e: Exception) {}
+          }
+          }.start()
+          Thread {
+          while (talking) {
+          try {
+          val pcm = q.poll(200, TimeUnit.MILLISECONDS)
+          if (pcm != null && trk != null) {
+          trk?.write(pcm, 0, pcm.size)
+          }
+          } catch (e: Exception) {}
+          }
+          }.start()
+          }
+          private fun stopAudio() {
+          talking = false
+          try { rec?.stop(); rec?.release() } catch (e: Exception) {}
+          rec = null
+          try { trk?.stop(); trk?.release() } catch (e: Exception) {}
+          trk = null
+          q.clear()
+          }
+          }
+          EOF
+
+          # Gradle build and Upload steps
+          gradle assembleDebug
+          mkdir -p output_apk
+          cp app/build/outputs/apk/debug/app-debug.apk output_apk/
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickTalk-APK
+          path: output_apk/app-debug.apk
+          
